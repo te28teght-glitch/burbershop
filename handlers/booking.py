@@ -64,16 +64,10 @@ async def process_booking_start(callback: CallbackQuery):
         )
 
 
-@router.callback_query(lambda c: c.data.startswith("master_"))
+@router.callback_query(lambda c: c.data.startswith("master_") and not c.data.startswith("master_edit_") and c.data.split("_")[1].isdigit())
 async def process_master_selection(callback: CallbackQuery, state: FSMContext):
-    # Проверяем, что это действительно выбор мастера (а не админская команда)
-    parts = callback.data.split("_")
-    if len(parts) < 2 or not parts[1].isdigit():
-        await callback.answer("⏳ Пожалуйста, подождите...")
-        return
-    
     await callback.answer()
-    master_id = int(parts[1])
+    master_id = int(callback.data.split("_")[1])
     await state.update_data(master_id=master_id)
     
     async with db.get_session() as session:
@@ -98,12 +92,20 @@ async def process_master_selection(callback: CallbackQuery, state: FSMContext):
         )
 
 
-@router.callback_query(lambda c: c.data.startswith("service_"))
+@router.callback_query(lambda c: c.data.startswith("service_") and not c.data.startswith("service_edit_") and not c.data.startswith("service_add_") and not c.data.startswith("service_delete_"))
 async def process_service_selection(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    _, master_id, service_id = callback.data.split("_")
-    master_id = int(master_id)
-    service_id = int(service_id)
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        master_id = int(parts[1])
+        service_id = int(parts[2])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     await state.update_data(service_id=service_id, master_id=master_id)
     
@@ -232,7 +234,6 @@ def get_date_keyboard():
     builder = InlineKeyboardBuilder()
     today = datetime.now()
     
-    # Показываем 7 дней
     for i in range(7):
         date = today + timedelta(days=i)
         day_name = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][date.weekday()]
@@ -253,7 +254,6 @@ async def process_date_selection(callback: CallbackQuery, state: FSMContext):
     date_str = callback.data.split("_")[1]
     selected_date = datetime.strptime(date_str, "%Y-%m-%d")
     
-    # Получаем данные из состояния
     data = await state.get_data()
     master_id = data.get('master_id')
     service_id = data.get('service_id')
@@ -265,7 +265,6 @@ async def process_date_selection(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    # Получаем длительность услуги
     async with db.get_session() as session:
         service_repo = ServiceRepository(session)
         service = await service_repo.get_by_id(service_id)
@@ -279,7 +278,6 @@ async def process_date_selection(callback: CallbackQuery, state: FSMContext):
         
         duration_minutes = service.duration_minutes
         
-        # Получаем доступные слоты
         booking_repo = BookingRepository(session)
         available_slots = await booking_repo.get_available_slots(
             master_id=master_id,
@@ -295,10 +293,7 @@ async def process_date_selection(callback: CallbackQuery, state: FSMContext):
             )
             return
         
-        # Сохраняем дату в состояние
         await state.update_data(selected_date=date_str)
-        
-        # Создаём клавиатуру со слотами
         keyboard = get_time_slots_keyboard(available_slots)
         
         await callback.message.edit_text(
@@ -315,15 +310,15 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
     """Выбор времени"""
     await callback.answer()
     
-    # Парсим callback_data: time_YYYY-MM-DD_HH:MM
-    data_parts = callback.data.split("_")
-    date_str = data_parts[1]
-    time_str = data_parts[2]
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
-    # Формируем datetime
+    date_str = parts[1]
+    time_str = parts[2]
     start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
     
-    # Получаем данные из состояния
     state_data = await state.get_data()
     master_id = state_data.get('master_id')
     service_id = state_data.get('service_id')
@@ -335,7 +330,6 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    # Получаем длительность услуги
     async with db.get_session() as session:
         service_repo = ServiceRepository(session)
         service = await service_repo.get_by_id(service_id)
@@ -349,7 +343,6 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
         
         duration_minutes = service.duration_minutes
         
-        # Проверяем, свободно ли время
         booking_repo = BookingRepository(session)
         is_available = await booking_repo.is_time_available(
             master_id=master_id,
@@ -358,7 +351,6 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
         )
         
         if not is_available:
-            # Время занято - показываем другие слоты
             available_slots = await booking_repo.get_available_slots(
                 master_id=master_id,
                 date=start_time,
@@ -382,7 +374,6 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
             )
             return
         
-        # Время свободно - сохраняем и переходим к имени
         await state.update_data(start_time=start_time.isoformat())
         
         await callback.message.edit_text(
@@ -442,7 +433,6 @@ async def process_phone(message: types.Message, state: FSMContext):
     
     start_time = datetime.fromisoformat(start_time_str)
     
-    # Получаем длительность услуги
     async with db.get_session() as session:
         service_repo = ServiceRepository(session)
         service = await service_repo.get_by_id(service_id)
@@ -456,7 +446,6 @@ async def process_phone(message: types.Message, state: FSMContext):
         
         end_time = start_time + timedelta(minutes=service.duration_minutes)
         
-        # Двойная проверка - свободно ли время
         booking_repo = BookingRepository(session)
         is_available = await booking_repo.is_time_available(
             master_id=master_id,
@@ -473,7 +462,6 @@ async def process_phone(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
-        # Создаём запись
         booking = Booking(
             client_name=client_name,
             client_phone=phone,

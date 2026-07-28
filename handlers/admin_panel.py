@@ -152,7 +152,6 @@ async def admin_add_process(message: types.Message, state: FSMContext):
     async with db.get_session() as session:
         repo = AdminRepository(session)
         
-        # Проверяем, не является ли уже админом
         existing = await repo.get_by_telegram_id(telegram_id)
         if existing and existing.is_active:
             await message.answer(
@@ -164,7 +163,6 @@ async def admin_add_process(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
-        # Добавляем админа
         admin = await repo.add_admin(telegram_id)
         
         await message.answer(
@@ -201,7 +199,7 @@ async def admin_remove_start(callback: CallbackQuery, state: FSMContext):
         builder = InlineKeyboardBuilder()
         for admin in admins:
             if admin.telegram_id == callback.from_user.id:
-                continue  # Не даём удалить самого себя
+                continue
             text = f"❌ {admin.full_name or admin.telegram_id}"
             builder.button(text=text, callback_data=f"admin_remove_{admin.telegram_id}")
         builder.button(text="⬅️ Отмена", callback_data="admin_manage")
@@ -261,8 +259,8 @@ async def admin_bookings(callback: CallbackQuery):
         [InlineKeyboardButton(text="📋 Записи на сегодня", callback_data="admin_today")],
         [InlineKeyboardButton(text="📅 Записи на завтра", callback_data="admin_tomorrow")],
         [InlineKeyboardButton(text="📊 Все записи", callback_data="admin_all")],
-        [InlineKeyboardButton(text="✅ Подтвердить запись", callback_data="admin_confirm_booking")],
-        [InlineKeyboardButton(text="❌ Отменить запись", callback_data="admin_cancel_booking")],
+        [InlineKeyboardButton(text="✅ Подтвердить запись", callback_data="admin_confirm_booking_start")],
+        [InlineKeyboardButton(text="❌ Отменить запись", callback_data="admin_cancel_booking_start")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_main")]
     ])
     
@@ -422,7 +420,16 @@ async def admin_booking_detail(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
     
-    booking_id = int(callback.data.split("_")[3])
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        booking_id = int(parts[3])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     async with db.get_session() as session:
         repo = BookingRepository(session)
@@ -469,7 +476,7 @@ async def admin_booking_detail(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=keyboard)
 
 
-@router.callback_query(lambda c: c.data.startswith("admin_confirm_"))
+@router.callback_query(lambda c: c.data.startswith("admin_confirm_") and c.data != "admin_confirm_booking_start")
 async def admin_confirm_booking(callback: CallbackQuery):
     """Подтверждение записи"""
     await callback.answer()
@@ -477,7 +484,19 @@ async def admin_confirm_booking(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
     
-    booking_id = int(callback.data.split("_")[2])
+    if callback.data == "admin_confirm_booking_start":
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        booking_id = int(parts[2])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     async with db.get_session() as session:
         repo = BookingRepository(session)
@@ -500,7 +519,7 @@ async def admin_confirm_booking(callback: CallbackQuery):
         )
 
 
-@router.callback_query(lambda c: c.data.startswith("admin_cancel_"))
+@router.callback_query(lambda c: c.data.startswith("admin_cancel_") and c.data != "admin_cancel_booking_start")
 async def admin_cancel_booking(callback: CallbackQuery):
     """Отмена записи админом"""
     await callback.answer()
@@ -508,7 +527,19 @@ async def admin_cancel_booking(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
     
-    booking_id = int(callback.data.split("_")[2])
+    if callback.data == "admin_cancel_booking_start":
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        booking_id = int(parts[2])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     async with db.get_session() as session:
         repo = BookingRepository(session)
@@ -530,7 +561,7 @@ async def admin_cancel_booking(callback: CallbackQuery):
         )
 
 
-@router.callback_query(lambda c: c.data == "admin_confirm_booking")
+@router.callback_query(lambda c: c.data == "admin_confirm_booking_start")
 async def admin_confirm_booking_start(callback: CallbackQuery, state: FSMContext):
     """Начало подтверждения записи по ID"""
     await callback.answer()
@@ -589,7 +620,7 @@ async def admin_confirm_booking_process(message: types.Message, state: FSMContex
         await state.clear()
 
 
-@router.callback_query(lambda c: c.data == "admin_cancel_booking")
+@router.callback_query(lambda c: c.data == "admin_cancel_booking_start")
 async def admin_cancel_booking_start(callback: CallbackQuery, state: FSMContext):
     """Начало отмены записи по ID"""
     await callback.answer()
@@ -1123,7 +1154,16 @@ async def service_edit_detail(callback: CallbackQuery, state: FSMContext):
     if not await is_admin(callback.from_user.id):
         return
     
-    service_id = int(callback.data.split("_")[2])
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        service_id = int(parts[2])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     async with db.get_session() as session:
         repo = ServiceRepository(session)
@@ -1149,22 +1189,34 @@ async def service_edit_detail(callback: CallbackQuery, state: FSMContext):
         )
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Название", callback_data="service_edit_name")],
-            [InlineKeyboardButton(text="💰 Цена", callback_data="service_edit_price")],
-            [InlineKeyboardButton(text="⏱ Длительность", callback_data="service_edit_duration")],
-            [InlineKeyboardButton(text="❌ Удалить услугу", callback_data="service_delete")],
+            [InlineKeyboardButton(text="✏️ Изменить название", callback_data="service_edit_name_action")],
+            [InlineKeyboardButton(text="💰 Изменить цену", callback_data="service_edit_price_action")],
+            [InlineKeyboardButton(text="⏱ Изменить длительность", callback_data="service_edit_duration_action")],
+            [InlineKeyboardButton(text="❌ Удалить услугу", callback_data="service_delete_action")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
         ])
         
         await callback.message.edit_text(text, reply_markup=keyboard)
 
 
-@router.callback_query(lambda c: c.data == "service_edit_name")
+@router.callback_query(lambda c: c.data == "service_edit_name_action")
 async def service_edit_name_start(callback: CallbackQuery, state: FSMContext):
     """Изменение названия услуги"""
     await callback.answer()
     
     if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    service_id = data.get('editing_service_id')
+    
+    if not service_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найдена услуга для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
+            ])
+        )
         return
     
     await callback.message.edit_text(
@@ -1183,6 +1235,16 @@ async def service_edit_name_process(message: types.Message, state: FSMContext):
     new_name = message.text.strip()
     data = await state.get_data()
     service_id = data.get('editing_service_id')
+    
+    if not service_id:
+        await message.answer(
+            "❌ Ошибка: не найдена услуга для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
+            ])
+        )
+        await state.clear()
+        return
     
     async with db.get_session() as session:
         repo = ServiceRepository(session)
@@ -1209,12 +1271,24 @@ async def service_edit_name_process(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-@router.callback_query(lambda c: c.data == "service_edit_price")
+@router.callback_query(lambda c: c.data == "service_edit_price_action")
 async def service_edit_price_start(callback: CallbackQuery, state: FSMContext):
     """Изменение цены услуги"""
     await callback.answer()
     
     if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    service_id = data.get('editing_service_id')
+    
+    if not service_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найдена услуга для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
+            ])
+        )
         return
     
     await callback.message.edit_text(
@@ -1245,6 +1319,16 @@ async def service_edit_price_process(message: types.Message, state: FSMContext):
     data = await state.get_data()
     service_id = data.get('editing_service_id')
     
+    if not service_id:
+        await message.answer(
+            "❌ Ошибка: не найдена услуга для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
+            ])
+        )
+        await state.clear()
+        return
+    
     async with db.get_session() as session:
         repo = ServiceRepository(session)
         service = await repo.get_by_id(service_id)
@@ -1270,12 +1354,24 @@ async def service_edit_price_process(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-@router.callback_query(lambda c: c.data == "service_edit_duration")
+@router.callback_query(lambda c: c.data == "service_edit_duration_action")
 async def service_edit_duration_start(callback: CallbackQuery, state: FSMContext):
     """Изменение длительности услуги"""
     await callback.answer()
     
     if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    service_id = data.get('editing_service_id')
+    
+    if not service_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найдена услуга для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
+            ])
+        )
         return
     
     await callback.message.edit_text(
@@ -1306,6 +1402,16 @@ async def service_edit_duration_process(message: types.Message, state: FSMContex
     data = await state.get_data()
     service_id = data.get('editing_service_id')
     
+    if not service_id:
+        await message.answer(
+            "❌ Ошибка: не найдена услуга для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
+            ])
+        )
+        await state.clear()
+        return
+    
     async with db.get_session() as session:
         repo = ServiceRepository(session)
         service = await repo.get_by_id(service_id)
@@ -1331,7 +1437,7 @@ async def service_edit_duration_process(message: types.Message, state: FSMContex
         await state.clear()
 
 
-@router.callback_query(lambda c: c.data == "service_delete")
+@router.callback_query(lambda c: c.data == "service_delete_action")
 async def service_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Подтверждение удаления услуги"""
     await callback.answer()
@@ -1341,6 +1447,15 @@ async def service_delete_confirm(callback: CallbackQuery, state: FSMContext):
     
     data = await state.get_data()
     service_id = data.get('editing_service_id')
+    
+    if not service_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найдена услуга для удаления.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_services")]
+            ])
+        )
+        return
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"service_delete_confirm_{service_id}")],
@@ -1362,7 +1477,16 @@ async def service_delete_process(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
     
-    service_id = int(callback.data.split("_")[3])
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        service_id = int(parts[3])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     async with db.get_session() as session:
         repo = ServiceRepository(session)
@@ -1398,27 +1522,21 @@ async def admin_stats(callback: CallbackQuery):
         return
     
     async with db.get_session() as session:
-        # Общее количество записей
         booking_repo = BookingRepository(session)
         total_bookings = len(await booking_repo.get_all())
         
-        # Записи за сегодня
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
         today_bookings = await booking_repo.get_by_date_range(today_start, today_end)
         
-        # Активные записи
         active_bookings = await booking_repo.get_active_bookings()
         
-        # Количество мастеров
         master_repo = MasterRepository(session)
         masters = await master_repo.get_all()
         
-        # Количество услуг
         service_repo = ServiceRepository(session)
         services = await service_repo.get_all()
         
-        # Подсчёт выручки
         total_revenue = 0
         for booking in active_bookings:
             if booking.is_confirmed:

@@ -1,0 +1,15 @@
+# Содержимое .gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+ENV/
+.env
+barbershop.db
+*.db
+.DS_Store
+*.log
