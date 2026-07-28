@@ -10,31 +10,18 @@ from keyboards.inline import get_admin_keyboard, get_main_menu_keyboard
 
 router = Router()
 
-def admin_only(func):
-    async def wrapper(message_or_callback, *args, **kwargs):
-        user_id = None
-        if isinstance(message_or_callback, types.Message):
-            user_id = message_or_callback.from_user.id
-        elif isinstance(message_or_callback, types.CallbackQuery):
-            user_id = message_or_callback.from_user.id
-            await message_or_callback.answer()
-        
-        if user_id not in config.ADMIN_IDS:
-            if isinstance(message_or_callback, types.Message):
-                await message_or_callback.answer("⛔ У вас нет доступа к админ-панели.")
-            elif isinstance(message_or_callback, types.CallbackQuery):
-                await message_or_callback.message.edit_text(
-                    "⛔ У вас нет доступа к админ-панели.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            return
-        return await func(message_or_callback, *args, **kwargs)
-    return wrapper
+# Простая функция проверки админа
+def is_admin(user_id: int) -> bool:
+    return user_id in config.ADMIN_IDS
 
 
 @router.message(Command("admin"))
-@admin_only
 async def cmd_admin(message: types.Message):
+    """Команда /admin — открывает админ-панель"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа к админ-панели.")
+        return
+    
     await message.answer(
         "🛠 <b>Админ-панель</b>\n\n"
         "Выберите действие:",
@@ -43,8 +30,17 @@ async def cmd_admin(message: types.Message):
 
 
 @router.callback_query(lambda c: c.data == "admin_panel")
-@admin_only
 async def process_admin_panel(callback: CallbackQuery):
+    """Кнопка 'Админ-панель' из главного меню"""
+    await callback.answer()
+    
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text(
+            "⛔ У вас нет доступа к админ-панели.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
+    
     await callback.message.edit_text(
         "🛠 <b>Админ-панель</b>\n\n"
         "Выберите действие:",
@@ -53,8 +49,17 @@ async def process_admin_panel(callback: CallbackQuery):
 
 
 @router.callback_query(lambda c: c.data == "admin_today")
-@admin_only
 async def admin_today(callback: CallbackQuery):
+    """Записи на сегодня"""
+    await callback.answer()
+    
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text(
+            "⛔ У вас нет доступа к админ-панели.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
+    
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     
@@ -87,8 +92,17 @@ async def admin_today(callback: CallbackQuery):
 
 
 @router.callback_query(lambda c: c.data == "admin_tomorrow")
-@admin_only
 async def admin_tomorrow(callback: CallbackQuery):
+    """Записи на завтра"""
+    await callback.answer()
+    
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text(
+            "⛔ У вас нет доступа к админ-панели.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
+    
     tomorrow_start = (datetime.now() + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow_end = tomorrow_start + timedelta(days=1)
     
@@ -121,8 +135,17 @@ async def admin_tomorrow(callback: CallbackQuery):
 
 
 @router.callback_query(lambda c: c.data == "admin_all")
-@admin_only
 async def admin_all(callback: CallbackQuery):
+    """Все активные записи"""
+    await callback.answer()
+    
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text(
+            "⛔ У вас нет доступа к админ-панели.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
+    
     async with db.get_session() as session:
         repo = BookingRepository(session)
         bookings = await repo.get_active_bookings()
@@ -155,6 +178,7 @@ async def admin_all(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data == "back_to_main")
 async def back_to_main_admin(callback: CallbackQuery):
+    """Возврат в главное меню"""
     await callback.answer()
     await callback.message.edit_text(
         "📋 <b>Главное меню</b>",
