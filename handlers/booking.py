@@ -66,8 +66,14 @@ async def process_booking_start(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data.startswith("master_"))
 async def process_master_selection(callback: CallbackQuery, state: FSMContext):
+    # Проверяем, что это действительно выбор мастера (а не админская команда)
+    parts = callback.data.split("_")
+    if len(parts) < 2 or not parts[1].isdigit():
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
     await callback.answer()
-    master_id = int(callback.data.split("_")[1])
+    master_id = int(parts[1])
     await state.update_data(master_id=master_id)
     
     async with db.get_session() as session:
@@ -293,34 +299,15 @@ async def process_date_selection(callback: CallbackQuery, state: FSMContext):
         await state.update_data(selected_date=date_str)
         
         # Создаём клавиатуру со слотами
-        keyboard = await get_time_slots_keyboard(available_slots)
+        keyboard = get_time_slots_keyboard(available_slots)
         
         await callback.message.edit_text(
             f"⏰ <b>Выберите время на {selected_date.strftime('%d.%m.%Y')}:</b>\n\n"
             f"🟢 Свободно | 🔴 Занято\n\n"
-            "Длительность услуги: {duration_minutes} минут",
+            f"Длительность услуги: {duration_minutes} минут",
             reply_markup=keyboard
         )
         await state.set_state(BookingStates.waiting_for_time)
-
-
-async def get_time_slots_keyboard(slots: list):
-    """Создать клавиатуру со слотами"""
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    
-    builder = InlineKeyboardBuilder()
-    
-    for slot in slots:
-        time_str = slot.strftime("%H:%M")
-        date_str = slot.strftime("%Y-%m-%d")
-        builder.button(
-            text=f"🟢 {time_str}",
-            callback_data=f"time_{date_str}_{time_str}"
-        )
-    
-    builder.button(text="⬅️ Назад к дате", callback_data="back_to_date")
-    builder.adjust(3)
-    return builder.as_markup()
 
 
 @router.callback_query(lambda c: c.data.startswith("time_"))
@@ -372,14 +359,26 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
         
         if not is_available:
             # Время занято - показываем другие слоты
+            available_slots = await booking_repo.get_available_slots(
+                master_id=master_id,
+                date=start_time,
+                duration_minutes=duration_minutes
+            )
+            
+            if not available_slots:
+                await callback.message.edit_text(
+                    "⏰ <b>Это время уже занято!</b>\n\n"
+                    "Свободных слотов на эту дату больше нет.\n"
+                    "Пожалуйста, выберите другую дату:",
+                    reply_markup=get_date_keyboard()
+                )
+                return
+            
+            keyboard = get_time_slots_keyboard(available_slots)
             await callback.message.edit_text(
                 "⏰ <b>Это время уже занято!</b>\n\n"
                 "Пожалуйста, выберите другое время:",
-                reply_markup=await get_available_slots_keyboard(
-                    master_id=master_id,
-                    date=start_time,
-                    duration_minutes=duration_minutes
-                )
+                reply_markup=keyboard
             )
             return
         
@@ -393,37 +392,6 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
             reply_markup=None
         )
         await state.set_state(BookingStates.waiting_for_name)
-
-
-async def get_available_slots_keyboard(master_id: int, date: datetime, duration_minutes: int):
-    """Получить клавиатуру с доступными слотами"""
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    
-    async with db.get_session() as session:
-        booking_repo = BookingRepository(session)
-        available_slots = await booking_repo.get_available_slots(
-            master_id=master_id,
-            date=date,
-            duration_minutes=duration_minutes
-        )
-        
-        if not available_slots:
-            builder = InlineKeyboardBuilder()
-            builder.button(text="⬅️ Назад к дате", callback_data="back_to_date")
-            return builder.as_markup()
-        
-        builder = InlineKeyboardBuilder()
-        for slot in available_slots:
-            time_str = slot.strftime("%H:%M")
-            date_str = slot.strftime("%Y-%m-%d")
-            builder.button(
-                text=f"🟢 {time_str}",
-                callback_data=f"time_{date_str}_{time_str}"
-            )
-        
-        builder.button(text="⬅️ Назад к дате", callback_data="back_to_date")
-        builder.adjust(3)
-        return builder.as_markup()
 
 
 @router.message(BookingStates.waiting_for_name)

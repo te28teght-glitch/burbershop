@@ -1,8 +1,18 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Float, BigInteger
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
 Base = declarative_base()
+
+class Admin(Base):
+    __tablename__ = "admins"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_id = Column(BigInteger, unique=True, nullable=False)
+    username = Column(String(100), nullable=True)
+    full_name = Column(String(200), nullable=True)
+    added_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
 
 class Master(Base):
     __tablename__ = "masters"
@@ -11,6 +21,7 @@ class Master(Base):
     name = Column(String(100), nullable=False)
     telegram_id = Column(String(50), nullable=True)
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
     
     services = relationship("Service", secondary="master_services", back_populates="masters")
 
@@ -22,6 +33,8 @@ class Service(Base):
     description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
     duration_minutes = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
     
     masters = relationship("Master", secondary="master_services", back_populates="services")
 
@@ -47,6 +60,8 @@ class Booking(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_confirmed = Column(Boolean, default=False)
     is_canceled = Column(Boolean, default=False)
+    canceled_at = Column(DateTime, nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
     
     master = relationship("Master")
     service = relationship("Service")

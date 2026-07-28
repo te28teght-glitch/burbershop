@@ -6,7 +6,7 @@ from aiogram.enums import ParseMode
 
 from config import config
 from database.db import db
-from handlers import start, booking, admin
+from handlers import start, booking, admin_panel
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,7 +18,7 @@ async def main():
     
     dp.include_router(start.router)
     dp.include_router(booking.router)
-    dp.include_router(admin.router)
+    dp.include_router(admin_panel.router)
     
     await dp.start_polling(bot)
 

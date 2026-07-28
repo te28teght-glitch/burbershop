@@ -16,6 +16,29 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_admin_main_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню админ-панели"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👑 Управление админами", callback_data="admin_manage")
+    builder.button(text="📋 Управление записями", callback_data="admin_bookings")
+    builder.button(text="💈 Управление мастерами", callback_data="admin_masters")
+    builder.button(text="✂️ Управление услугами", callback_data="admin_services")
+    builder.button(text="📊 Статистика", callback_data="admin_stats")
+    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_admin_services_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура управления услугами"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Добавить услугу", callback_data="service_add_start")
+    builder.button(text="✏️ Редактировать услугу", callback_data="service_edit_start")
+    builder.button(text="⬅️ Назад", callback_data="admin_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def get_masters_keyboard(masters: List[Master]) -> InlineKeyboardMarkup:
     """Клавиатура с выбором мастера"""
     builder = InlineKeyboardBuilder()
@@ -38,17 +61,6 @@ def get_services_keyboard(services: List[Service], master_id: int) -> InlineKeyb
             callback_data=f"service_{master_id}_{service.id}"
         )
     builder.button(text="⬅️ Назад к мастерам", callback_data="back_to_masters")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def get_admin_keyboard() -> InlineKeyboardMarkup:
-    """Админ-панель (только для админов)"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📋 Записи на сегодня", callback_data="admin_today")
-    builder.button(text="📅 Записи на завтра", callback_data="admin_tomorrow")
-    builder.button(text="📊 Все записи", callback_data="admin_all")
-    builder.button(text="⬅️ Назад", callback_data="back_to_main")
     builder.adjust(1)
     return builder.as_markup()
 
