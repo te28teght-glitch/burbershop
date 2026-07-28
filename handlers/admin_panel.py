@@ -12,6 +12,7 @@ from database.repositories.booking_repo import BookingRepository
 from database.repositories.master_repo import MasterRepository
 from database.repositories.service_repo import ServiceRepository
 from database.repositories.admin_repo import AdminRepository
+from database.repositories.master_service_repo import MasterServiceRepository
 from keyboards.inline import get_admin_main_keyboard, get_main_menu_keyboard, get_admin_services_keyboard
 
 router = Router()
@@ -35,6 +36,11 @@ class AdminStates(StatesGroup):
     editing_service_name = State()
     editing_service_price = State()
     editing_service_duration = State()
+    
+    # Привязка услуг к мастерам
+    managing_master_services = State()
+    adding_master_service = State()
+    removing_master_service = State()
     
     # Управление записями
     confirming_booking = State()
@@ -816,11 +822,16 @@ async def master_edit_detail(callback: CallbackQuery, state: FSMContext):
         
         await state.update_data(editing_master_id=master_id)
         
+        # Получаем услуги мастера
+        master_service_repo = MasterServiceRepository(session)
+        service_ids = await master_service_repo.get_service_ids_by_master(master_id)
+        
         status = "🟢 Активен" if master.is_active else "🔴 Неактивен"
         text = (
             f"✏️ <b>Редактирование мастера</b>\n\n"
             f"Имя: <b>{master.name}</b>\n"
-            f"Статус: {status}\n\n"
+            f"Статус: {status}\n"
+            f"Услуг: <b>{len(service_ids)}</b>\n\n"
             f"Что хотите сделать?"
         )
         
@@ -830,6 +841,7 @@ async def master_edit_detail(callback: CallbackQuery, state: FSMContext):
                 text="🔄 Сделать неактивным" if master.is_active else "🔄 Активировать",
                 callback_data="master_edit_status"
             )],
+            [InlineKeyboardButton(text="📋 Управление услугами", callback_data=f"master_manage_services_{master_id}")],
             [InlineKeyboardButton(text="❌ Удалить мастера", callback_data="master_delete")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
         ])
@@ -978,6 +990,163 @@ async def master_delete_process(callback: CallbackQuery):
             )
 
 
+# ========== УПРАВЛЕНИЕ УСЛУГАМИ МАСТЕРА ==========
+
+@router.callback_query(lambda c: c.data.startswith("master_manage_services_"))
+async def master_manage_services(callback: CallbackQuery, state: FSMContext):
+    """Управление услугами мастера"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        master_id = int(parts[3])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    await state.update_data(managing_master_id=master_id)
+    
+    async with db.get_session() as session:
+        # Получаем мастера
+        master_repo = MasterRepository(session)
+        master = await master_repo.get_by_id(master_id)
+        
+        if not master:
+            await callback.message.edit_text(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+            return
+        
+        # Получаем все услуги
+        service_repo = ServiceRepository(session)
+        all_services = await service_repo.get_all()
+        
+        # Получаем ID услуг, привязанных к мастеру
+        master_service_repo = MasterServiceRepository(session)
+        bound_service_ids = await master_service_repo.get_service_ids_by_master(master_id)
+        
+        text = f"💈 <b>Управление услугами мастера {master.name}</b>\n\n"
+        
+        if bound_service_ids:
+            text += "✅ <b>Привязанные услуги:</b>\n"
+            for service in all_services:
+                if service.id in bound_service_ids:
+                    text += f"  • {service.name} — {service.price} ₽\n"
+            text += "\n"
+        else:
+            text += "❌ У этого мастера пока нет услуг.\n\n"
+        
+        text += "Нажмите ➕ чтобы добавить услугу, ➖ чтобы убрать:"
+        
+        # Создаём клавиатуру
+        builder = InlineKeyboardBuilder()
+        
+        # Кнопки для добавления услуг
+        for service in all_services:
+            if service.id not in bound_service_ids:
+                builder.button(
+                    text=f"➕ {service.name} — {service.price} ₽",
+                    callback_data=f"master_add_service_{master_id}_{service.id}"
+                )
+        
+        # Кнопки для удаления услуг
+        for service in all_services:
+            if service.id in bound_service_ids:
+                builder.button(
+                    text=f"➖ {service.name}",
+                    callback_data=f"master_remove_service_{master_id}_{service.id}"
+                )
+        
+        builder.button(text="⬅️ Назад к мастерам", callback_data="admin_masters")
+        builder.adjust(1)
+        
+        if not any(service.id not in bound_service_ids for service in all_services) and not bound_service_ids:
+            # Если нет ни доступных, ни привязанных услуг
+            await callback.message.edit_text(
+                text + "\n\n⚠️ Услуг пока нет. Сначала добавьте услуги через 'Управление услугами'.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастерам", callback_data="admin_masters")]
+                ])
+            )
+            return
+        
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(lambda c: c.data.startswith("master_add_service_"))
+async def master_add_service(callback: CallbackQuery, state: FSMContext):
+    """Добавить услугу мастеру"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) != 5:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        master_id = int(parts[3])
+        service_id = int(parts[4])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    async with db.get_session() as session:
+        master_service_repo = MasterServiceRepository(session)
+        success = await master_service_repo.add_service_to_master(master_id, service_id)
+        
+        if success:
+            await callback.answer("✅ Услуга добавлена мастеру!", show_alert=True)
+        else:
+            await callback.answer("⚠️ Услуга уже привязана!", show_alert=True)
+        
+        # Возвращаемся к управлению услугами мастера
+        await master_manage_services(callback, state)
+
+
+@router.callback_query(lambda c: c.data.startswith("master_remove_service_"))
+async def master_remove_service(callback: CallbackQuery, state: FSMContext):
+    """Удалить услугу у мастера"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) != 5:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        master_id = int(parts[3])
+        service_id = int(parts[4])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    async with db.get_session() as session:
+        master_service_repo = MasterServiceRepository(session)
+        success = await master_service_repo.remove_service_from_master(master_id, service_id)
+        
+        if success:
+            await callback.answer("✅ Услуга отвязана от мастера!", show_alert=True)
+        else:
+            await callback.answer("⚠️ Услуга уже отвязана!", show_alert=True)
+        
+        # Возвращаемся к управлению услугами мастера
+        await master_manage_services(callback, state)
 # ========== УПРАВЛЕНИЕ УСЛУГАМИ ==========
 
 @router.callback_query(lambda c: c.data == "admin_services")
