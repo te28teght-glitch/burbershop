@@ -29,25 +29,6 @@ async def cmd_admin(message: types.Message):
     )
 
 
-@router.callback_query(lambda c: c.data == "admin_panel")
-async def process_admin_panel(callback: CallbackQuery):
-    """Кнопка 'Админ-панель' из главного меню"""
-    await callback.answer()
-    
-    if not is_admin(callback.from_user.id):
-        await callback.message.edit_text(
-            "⛔ У вас нет доступа к админ-панели.",
-            reply_markup=get_main_menu_keyboard()
-        )
-        return
-    
-    await callback.message.edit_text(
-        "🛠 <b>Админ-панель</b>\n\n"
-        "Выберите действие:",
-        reply_markup=get_admin_keyboard()
-    )
-
-
 @router.callback_query(lambda c: c.data == "admin_today")
 async def admin_today(callback: CallbackQuery):
     """Записи на сегодня"""

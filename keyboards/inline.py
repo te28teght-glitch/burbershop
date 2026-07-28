@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List
 
@@ -6,16 +6,18 @@ from database.models import Master, Service
 
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню (инлайн) - без кнопки админки"""
     builder = InlineKeyboardBuilder()
     builder.button(text="✂️ Записаться", callback_data="booking_start")
     builder.button(text="📋 Мои записи", callback_data="my_bookings")
     builder.button(text="📞 Контакты", callback_data="contacts")
-    builder.button(text="🛠 Админ-панель", callback_data="admin_panel")
+    # Кнопка админки УДАЛЕНА
     builder.adjust(1)
     return builder.as_markup()
 
 
 def get_masters_keyboard(masters: List[Master]) -> InlineKeyboardMarkup:
+    """Клавиатура с выбором мастера"""
     builder = InlineKeyboardBuilder()
     for master in masters:
         builder.button(
@@ -28,6 +30,7 @@ def get_masters_keyboard(masters: List[Master]) -> InlineKeyboardMarkup:
 
 
 def get_services_keyboard(services: List[Service], master_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура с выбором услуги"""
     builder = InlineKeyboardBuilder()
     for service in services:
         builder.button(
@@ -40,6 +43,7 @@ def get_services_keyboard(services: List[Service], master_id: int) -> InlineKeyb
 
 
 def get_admin_keyboard() -> InlineKeyboardMarkup:
+    """Админ-панель (только для админов)"""
     builder = InlineKeyboardBuilder()
     builder.button(text="📋 Записи на сегодня", callback_data="admin_today")
     builder.button(text="📅 Записи на завтра", callback_data="admin_tomorrow")
