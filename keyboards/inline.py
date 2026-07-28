@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List
+from datetime import datetime
 
 from database.models import Master, Service
 
@@ -11,7 +12,6 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="✂️ Записаться", callback_data="booking_start")
     builder.button(text="📋 Мои записи", callback_data="my_bookings")
     builder.button(text="📞 Контакты", callback_data="contacts")
-    # Кнопка админки УДАЛЕНА
     builder.adjust(1)
     return builder.as_markup()
 
@@ -50,4 +50,21 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📊 Все записи", callback_data="admin_all")
     builder.button(text="⬅️ Назад", callback_data="back_to_main")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_time_slots_keyboard(slots: List[datetime]) -> InlineKeyboardMarkup:
+    """Клавиатура с выбором времени"""
+    builder = InlineKeyboardBuilder()
+    
+    for slot in slots:
+        time_str = slot.strftime("%H:%M")
+        date_str = slot.strftime("%Y-%m-%d")
+        builder.button(
+            text=f"🟢 {time_str}",
+            callback_data=f"time_{date_str}_{time_str}"
+        )
+    
+    builder.button(text="⬅️ Назад к дате", callback_data="back_to_date")
+    builder.adjust(3)
     return builder.as_markup()

@@ -14,6 +14,7 @@ from keyboards.inline import (
     get_main_menu_keyboard,
     get_masters_keyboard,
     get_services_keyboard,
+    get_time_slots_keyboard
 )
 
 router = Router()
@@ -22,6 +23,7 @@ class BookingStates(StatesGroup):
     waiting_for_master = State()
     waiting_for_service = State()
     waiting_for_datetime = State()
+    waiting_for_time = State()
     waiting_for_name = State()
     waiting_for_phone = State()
 
@@ -100,11 +102,8 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
     await state.update_data(service_id=service_id, master_id=master_id)
     
     await callback.message.edit_text(
-        "📅 <b>Выберите дату и время:</b>\n\n"
-        "Сейчас доступна запись на сегодня и завтра.\n"
-        "Напишите дату и время в формате:\n"
-        "<code>28.07 15:30</code>\n\n"
-        "Или нажмите кнопку 'Сегодня' для быстрой записи.",
+        "📅 <b>Выберите дату:</b>\n\n"
+        "Выберите день для записи:",
         reply_markup=get_date_keyboard()
     )
     
@@ -162,6 +161,17 @@ async def back_to_services(callback: CallbackQuery, state: FSMContext):
         )
 
 
+@router.callback_query(lambda c: c.data == "back_to_date")
+async def back_to_date(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.edit_text(
+        "📅 <b>Выберите дату:</b>\n\n"
+        "Выберите день для записи:",
+        reply_markup=get_date_keyboard()
+    )
+    await state.set_state(BookingStates.waiting_for_datetime)
+
+
 @router.callback_query(lambda c: c.data == "my_bookings")
 async def process_my_bookings(callback: CallbackQuery):
     await callback.answer()
@@ -210,20 +220,21 @@ async def process_contacts(callback: CallbackQuery):
 
 
 def get_date_keyboard():
+    """Клавиатура для выбора даты"""
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     
     builder = InlineKeyboardBuilder()
     today = datetime.now()
-    tomorrow = today + timedelta(days=1)
     
-    builder.button(
-        text=f"📅 Сегодня ({today.strftime('%d.%m')})",
-        callback_data=f"date_{today.strftime('%Y-%m-%d')}"
-    )
-    builder.button(
-        text=f"📅 Завтра ({tomorrow.strftime('%d.%m')})",
-        callback_data=f"date_{tomorrow.strftime('%Y-%m-%d')}"
-    )
+    # Показываем 7 дней
+    for i in range(7):
+        date = today + timedelta(days=i)
+        day_name = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][date.weekday()]
+        builder.button(
+            text=f"📅 {day_name} {date.strftime('%d.%m')}",
+            callback_data=f"date_{date.strftime('%Y-%m-%d')}"
+        )
+    
     builder.button(text="⬅️ Назад к услугам", callback_data="back_to_services")
     builder.adjust(1)
     return builder.as_markup()
@@ -231,16 +242,188 @@ def get_date_keyboard():
 
 @router.callback_query(lambda c: c.data.startswith("date_"))
 async def process_date_selection(callback: CallbackQuery, state: FSMContext):
+    """Выбор даты -> показываем свободное время"""
     await callback.answer()
     date_str = callback.data.split("_")[1]
-    await state.update_data(booking_date=date_str)
+    selected_date = datetime.strptime(date_str, "%Y-%m-%d")
     
-    await callback.message.edit_text(
-        "👤 <b>Введите ваше имя:</b>\n\n"
-        "Как к вам обращаться?",
-        reply_markup=None
-    )
-    await state.set_state(BookingStates.waiting_for_name)
+    # Получаем данные из состояния
+    data = await state.get_data()
+    master_id = data.get('master_id')
+    service_id = data.get('service_id')
+    
+    if not master_id or not service_id:
+        await callback.message.edit_text(
+            "⚠️ Ошибка, попробуйте начать запись заново.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
+    
+    # Получаем длительность услуги
+    async with db.get_session() as session:
+        service_repo = ServiceRepository(session)
+        service = await service_repo.get_by_id(service_id)
+        
+        if not service:
+            await callback.message.edit_text(
+                "⚠️ Услуга не найдена.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
+        
+        duration_minutes = service.duration_minutes
+        
+        # Получаем доступные слоты
+        booking_repo = BookingRepository(session)
+        available_slots = await booking_repo.get_available_slots(
+            master_id=master_id,
+            date=selected_date,
+            duration_minutes=duration_minutes
+        )
+        
+        if not available_slots:
+            await callback.message.edit_text(
+                f"😔 На {selected_date.strftime('%d.%m.%Y')} нет свободных слотов.\n\n"
+                "Пожалуйста, выберите другую дату:",
+                reply_markup=get_date_keyboard()
+            )
+            return
+        
+        # Сохраняем дату в состояние
+        await state.update_data(selected_date=date_str)
+        
+        # Создаём клавиатуру со слотами
+        keyboard = await get_time_slots_keyboard(available_slots)
+        
+        await callback.message.edit_text(
+            f"⏰ <b>Выберите время на {selected_date.strftime('%d.%m.%Y')}:</b>\n\n"
+            f"🟢 Свободно | 🔴 Занято\n\n"
+            "Длительность услуги: {duration_minutes} минут",
+            reply_markup=keyboard
+        )
+        await state.set_state(BookingStates.waiting_for_time)
+
+
+async def get_time_slots_keyboard(slots: list):
+    """Создать клавиатуру со слотами"""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    builder = InlineKeyboardBuilder()
+    
+    for slot in slots:
+        time_str = slot.strftime("%H:%M")
+        date_str = slot.strftime("%Y-%m-%d")
+        builder.button(
+            text=f"🟢 {time_str}",
+            callback_data=f"time_{date_str}_{time_str}"
+        )
+    
+    builder.button(text="⬅️ Назад к дате", callback_data="back_to_date")
+    builder.adjust(3)
+    return builder.as_markup()
+
+
+@router.callback_query(lambda c: c.data.startswith("time_"))
+async def process_time_selection(callback: CallbackQuery, state: FSMContext):
+    """Выбор времени"""
+    await callback.answer()
+    
+    # Парсим callback_data: time_YYYY-MM-DD_HH:MM
+    data_parts = callback.data.split("_")
+    date_str = data_parts[1]
+    time_str = data_parts[2]
+    
+    # Формируем datetime
+    start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+    
+    # Получаем данные из состояния
+    state_data = await state.get_data()
+    master_id = state_data.get('master_id')
+    service_id = state_data.get('service_id')
+    
+    if not master_id or not service_id:
+        await callback.message.edit_text(
+            "⚠️ Ошибка, попробуйте начать запись заново.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
+    
+    # Получаем длительность услуги
+    async with db.get_session() as session:
+        service_repo = ServiceRepository(session)
+        service = await service_repo.get_by_id(service_id)
+        
+        if not service:
+            await callback.message.edit_text(
+                "⚠️ Услуга не найдена.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
+        
+        duration_minutes = service.duration_minutes
+        
+        # Проверяем, свободно ли время
+        booking_repo = BookingRepository(session)
+        is_available = await booking_repo.is_time_available(
+            master_id=master_id,
+            start_time=start_time,
+            duration_minutes=duration_minutes
+        )
+        
+        if not is_available:
+            # Время занято - показываем другие слоты
+            await callback.message.edit_text(
+                "⏰ <b>Это время уже занято!</b>\n\n"
+                "Пожалуйста, выберите другое время:",
+                reply_markup=await get_available_slots_keyboard(
+                    master_id=master_id,
+                    date=start_time,
+                    duration_minutes=duration_minutes
+                )
+            )
+            return
+        
+        # Время свободно - сохраняем и переходим к имени
+        await state.update_data(start_time=start_time.isoformat())
+        
+        await callback.message.edit_text(
+            f"✅ <b>Время свободно!</b>\n\n"
+            f"📅 {start_time.strftime('%d.%m.%Y %H:%M')}\n\n"
+            "👤 <b>Введите ваше имя:</b>",
+            reply_markup=None
+        )
+        await state.set_state(BookingStates.waiting_for_name)
+
+
+async def get_available_slots_keyboard(master_id: int, date: datetime, duration_minutes: int):
+    """Получить клавиатуру с доступными слотами"""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    async with db.get_session() as session:
+        booking_repo = BookingRepository(session)
+        available_slots = await booking_repo.get_available_slots(
+            master_id=master_id,
+            date=date,
+            duration_minutes=duration_minutes
+        )
+        
+        if not available_slots:
+            builder = InlineKeyboardBuilder()
+            builder.button(text="⬅️ Назад к дате", callback_data="back_to_date")
+            return builder.as_markup()
+        
+        builder = InlineKeyboardBuilder()
+        for slot in available_slots:
+            time_str = slot.strftime("%H:%M")
+            date_str = slot.strftime("%Y-%m-%d")
+            builder.button(
+                text=f"🟢 {time_str}",
+                callback_data=f"time_{date_str}_{time_str}"
+            )
+        
+        builder.button(text="⬅️ Назад к дате", callback_data="back_to_date")
+        builder.adjust(3)
+        return builder.as_markup()
 
 
 @router.message(BookingStates.waiting_for_name)
@@ -279,17 +462,50 @@ async def process_phone(message: types.Message, state: FSMContext):
     data = await state.get_data()
     master_id = data.get('master_id')
     service_id = data.get('service_id')
-    booking_date = data.get('booking_date')
+    start_time_str = data.get('start_time')
     client_name = data.get('client_name')
     
-    try:
-        start_time = datetime.strptime(f"{booking_date} 10:00", "%Y-%m-%d %H:%M")
-        end_time = start_time + timedelta(minutes=30)
-    except:
-        start_time = datetime.now() + timedelta(hours=1)
-        end_time = start_time + timedelta(minutes=30)
+    if not start_time_str:
+        await message.answer(
+            "⚠️ Ошибка времени, попробуйте записаться заново.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
     
+    start_time = datetime.fromisoformat(start_time_str)
+    
+    # Получаем длительность услуги
     async with db.get_session() as session:
+        service_repo = ServiceRepository(session)
+        service = await service_repo.get_by_id(service_id)
+        
+        if not service:
+            await message.answer(
+                "⚠️ Услуга не найдена.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
+        
+        end_time = start_time + timedelta(minutes=service.duration_minutes)
+        
+        # Двойная проверка - свободно ли время
+        booking_repo = BookingRepository(session)
+        is_available = await booking_repo.is_time_available(
+            master_id=master_id,
+            start_time=start_time,
+            duration_minutes=service.duration_minutes
+        )
+        
+        if not is_available:
+            await message.answer(
+                "⏰ К сожалению, это время уже занято.\n\n"
+                "Пожалуйста, начните запись заново.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            await state.clear()
+            return
+        
+        # Создаём запись
         booking = Booking(
             client_name=client_name,
             client_phone=phone,
@@ -311,7 +527,8 @@ async def process_phone(message: types.Message, state: FSMContext):
         f"✅ <b>Запись создана!</b>\n\n"
         f"👤 Имя: {client_name}\n"
         f"📱 Телефон: {phone}\n"
-        f"🕐 Время: {start_time.strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"🕐 Время: {start_time.strftime('%d.%m.%Y %H:%M')}\n"
+        f"⏱ Длительность: {service.duration_minutes} мин\n\n"
         f"Номер записи: <b>#{booking_id}</b>\n\n"
         f"Администратор свяжется с вами для подтверждения.",
         reply_markup=get_main_menu_keyboard()

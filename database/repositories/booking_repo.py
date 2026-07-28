@@ -1,5 +1,5 @@
-from typing import List
-from datetime import datetime
+from typing import List, Optional
+from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
@@ -13,6 +13,7 @@ class BookingRepository(BaseRepository[Booking]):
         super().__init__(session, Booking)
     
     async def get_by_date_range(self, start_date: datetime, end_date: datetime) -> List[Booking]:
+        """Получить записи за период"""
         query = (
             select(Booking)
             .where(
@@ -32,6 +33,7 @@ class BookingRepository(BaseRepository[Booking]):
         return result.scalars().all()
     
     async def get_active_bookings(self) -> List[Booking]:
+        """Получить все активные записи"""
         query = (
             select(Booking)
             .where(Booking.is_canceled == False)
@@ -45,6 +47,7 @@ class BookingRepository(BaseRepository[Booking]):
         return result.scalars().all()
     
     async def get_by_client(self, telegram_id: str) -> List[Booking]:
+        """Получить записи клиента"""
         query = (
             select(Booking)
             .where(
@@ -64,9 +67,104 @@ class BookingRepository(BaseRepository[Booking]):
         return result.scalars().all()
     
     async def cancel_booking(self, booking_id: int) -> bool:
+        """Отменить запись"""
         booking = await self.get_by_id(booking_id)
         if booking:
             booking.is_canceled = True
             await self.session.commit()
             return True
         return False
+    
+    async def get_booked_slots(
+        self, 
+        master_id: int, 
+        date: datetime, 
+        duration_minutes: int
+    ) -> List[datetime]:
+        """Получить занятые слоты для мастера на конкретную дату"""
+        day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        
+        query = (
+            select(Booking)
+            .where(
+                and_(
+                    Booking.master_id == master_id,
+                    Booking.start_time >= day_start,
+                    Booking.start_time < day_end,
+                    Booking.is_canceled == False
+                )
+            )
+            .order_by(Booking.start_time)
+        )
+        result = await self.session.execute(query)
+        bookings = result.scalars().all()
+        
+        booked_slots = []
+        for booking in bookings:
+            current = booking.start_time
+            while current < booking.end_time:
+                booked_slots.append(current)
+                current += timedelta(minutes=30)
+        
+        return booked_slots
+    
+    async def is_time_available(
+        self, 
+        master_id: int, 
+        start_time: datetime, 
+        duration_minutes: int
+    ) -> bool:
+        """Проверить, свободно ли время"""
+        end_time = start_time + timedelta(minutes=duration_minutes)
+        
+        query = (
+            select(Booking)
+            .where(
+                and_(
+                    Booking.master_id == master_id,
+                    Booking.is_canceled == False,
+                    Booking.start_time < end_time,
+                    Booking.end_time > start_time
+                )
+            )
+        )
+        result = await self.session.execute(query)
+        overlapping = result.scalars().first()
+        
+        return overlapping is None
+    
+    async def get_available_slots(
+        self,
+        master_id: int,
+        date: datetime,
+        duration_minutes: int
+    ) -> List[datetime]:
+        """Получить все свободные слоты на дату"""
+        # Начало и конец рабочего дня
+        day_start = date.replace(hour=10, minute=0, second=0, microsecond=0)  # 10:00
+        day_end = date.replace(hour=20, minute=0, second=0, microsecond=0)    # 20:00
+        
+        # Получаем занятые слоты
+        booked_slots = await self.get_booked_slots(master_id, date, duration_minutes)
+        
+        # Генерируем все возможные слоты с шагом 30 минут
+        available_slots = []
+        current = day_start
+        
+        while current < day_end:
+            # Проверяем, не занят ли слот
+            is_booked = False
+            for booked in booked_slots:
+                if booked == current:
+                    is_booked = True
+                    break
+            
+            if not is_booked:
+                # Дополнительно проверяем, не пересекается ли с другими записями
+                if await self.is_time_available(master_id, current, duration_minutes):
+                    available_slots.append(current)
+            
+            current += timedelta(minutes=30)
+        
+        return available_slots
