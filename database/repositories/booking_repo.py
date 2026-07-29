@@ -71,6 +71,7 @@ class BookingRepository(BaseRepository[Booking]):
         booking = await self.get_by_id(booking_id)
         if booking:
             booking.is_canceled = True
+            booking.canceled_at = datetime.now()
             await self.session.commit()
             return True
         return False
@@ -81,7 +82,7 @@ class BookingRepository(BaseRepository[Booking]):
         date: datetime, 
         duration_minutes: int
     ) -> List[datetime]:
-        """Получить занятые слоты для мастера на конкретную дату"""
+        """Получить все занятые слоты для мастера на конкретную дату"""
         day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
         
@@ -103,6 +104,10 @@ class BookingRepository(BaseRepository[Booking]):
         booked_slots = []
         for booking in bookings:
             current = booking.start_time
+            minutes = current.minute
+            if minutes % 30 != 0:
+                current = current.replace(minute=(minutes // 30) * 30)
+            
             while current < booking.end_time:
                 booked_slots.append(current)
                 current += timedelta(minutes=30)
@@ -140,31 +145,35 @@ class BookingRepository(BaseRepository[Booking]):
         date: datetime,
         duration_minutes: int
     ) -> List[datetime]:
-        """Получить все свободные слоты на дату"""
-        # Начало и конец рабочего дня
-        day_start = date.replace(hour=10, minute=0, second=0, microsecond=0)  # 10:00
-        day_end = date.replace(hour=20, minute=0, second=0, microsecond=0)    # 20:00
+        """Получить все свободные слоты на дату с учётом рабочего времени мастера"""
+        from database.repositories.master_repo import MasterRepository
+        master_repo = MasterRepository(self.session)
+        master = await master_repo.get_by_id(master_id)
         
-        # Получаем занятые слоты
+        if not master:
+            return []
+        
+        day_start = datetime.combine(date.date(), master.work_start)
+        day_end = datetime.combine(date.date(), master.work_end)
+        slot_step = master.slot_duration or 30
+        
         booked_slots = await self.get_booked_slots(master_id, date, duration_minutes)
         
-        # Генерируем все возможные слоты с шагом 30 минут
         available_slots = []
         current = day_start
         
-        while current < day_end:
-            # Проверяем, не занят ли слот
-            is_booked = False
+        while current + timedelta(minutes=duration_minutes) <= day_end:
+            is_available = True
+            
             for booked in booked_slots:
-                if booked == current:
-                    is_booked = True
+                if booked >= current and booked < current + timedelta(minutes=duration_minutes):
+                    is_available = False
                     break
             
-            if not is_booked:
-                # Дополнительно проверяем, не пересекается ли с другими записями
+            if is_available:
                 if await self.is_time_available(master_id, current, duration_minutes):
                     available_slots.append(current)
             
-            current += timedelta(minutes=30)
+            current += timedelta(minutes=slot_step)
         
         return available_slots

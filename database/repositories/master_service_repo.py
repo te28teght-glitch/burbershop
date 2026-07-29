@@ -22,7 +22,6 @@ class MasterServiceRepository(BaseRepository[MasterService]):
     
     async def add_service_to_master(self, master_id: int, service_id: int) -> bool:
         """Привязать услугу к мастеру"""
-        # Проверяем, не существует ли уже такая связь
         query = select(MasterService).where(
             and_(
                 MasterService.master_id == master_id,
@@ -53,12 +52,10 @@ class MasterServiceRepository(BaseRepository[MasterService]):
         return result.rowcount > 0
     
     async def sync_master_services(self, master_id: int, service_ids: list[int]) -> bool:
-        """Синхронизировать услуги мастера (заменить все на новый список)"""
-        # Удаляем все старые связи
+        """Синхронизировать услуги мастера"""
         query = delete(MasterService).where(MasterService.master_id == master_id)
         await self.session.execute(query)
         
-        # Добавляем новые
         for service_id in service_ids:
             master_service = MasterService(master_id=master_id, service_id=service_id)
             self.session.add(master_service)

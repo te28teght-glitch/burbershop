@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Float, BigInteger
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Float, BigInteger, Time
 from sqlalchemy.orm import declarative_base, relationship
-from datetime import datetime
+from datetime import datetime, time
 
 Base = declarative_base()
 
@@ -22,6 +22,11 @@ class Master(Base):
     telegram_id = Column(String(50), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Рабочее время
+    work_start = Column(Time, default=time(10, 0))
+    work_end = Column(Time, default=time(20, 0))
+    slot_duration = Column(Integer, default=30)
     
     services = relationship("Service", secondary="master_services", back_populates="masters")
 

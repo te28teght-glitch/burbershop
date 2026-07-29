@@ -27,6 +27,8 @@ class AdminStates(StatesGroup):
     adding_master = State()
     editing_master_name = State()
     editing_master_status = State()
+    editing_master_time = State()
+    editing_master_slot = State()
     
     # Управление услугами
     adding_service = State()
@@ -797,7 +799,7 @@ async def master_edit_start(callback: CallbackQuery):
         )
 
 
-@router.callback_query(lambda c: c.data.startswith("master_edit_") and c.data != "master_edit_start")
+@router.callback_query(lambda c: c.data.startswith("master_edit_") and c.data != "master_edit_start" and len(c.data.split("_")) == 3 and c.data.split("_")[2].isdigit())
 async def master_edit_detail(callback: CallbackQuery, state: FSMContext):
     """Детали мастера для редактирования"""
     await callback.answer()
@@ -805,7 +807,16 @@ async def master_edit_detail(callback: CallbackQuery, state: FSMContext):
     if not await is_admin(callback.from_user.id):
         return
     
-    master_id = int(callback.data.split("_")[2])
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        master_id = int(parts[2])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     async with db.get_session() as session:
         repo = MasterRepository(session)
@@ -822,7 +833,6 @@ async def master_edit_detail(callback: CallbackQuery, state: FSMContext):
         
         await state.update_data(editing_master_id=master_id)
         
-        # Получаем услуги мастера
         master_service_repo = MasterServiceRepository(session)
         service_ids = await master_service_repo.get_service_ids_by_master(master_id)
         
@@ -836,25 +846,38 @@ async def master_edit_detail(callback: CallbackQuery, state: FSMContext):
         )
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Изменить имя", callback_data="master_edit_name")],
+            [InlineKeyboardButton(text="✏️ Изменить имя", callback_data="master_edit_name_action")],
             [InlineKeyboardButton(
                 text="🔄 Сделать неактивным" if master.is_active else "🔄 Активировать",
-                callback_data="master_edit_status"
+                callback_data="master_edit_status_action"
             )],
+            [InlineKeyboardButton(text="🕐 Рабочее время", callback_data="master_edit_time")],
             [InlineKeyboardButton(text="📋 Управление услугами", callback_data=f"master_manage_services_{master_id}")],
-            [InlineKeyboardButton(text="❌ Удалить мастера", callback_data="master_delete")],
+            [InlineKeyboardButton(text="❌ Удалить мастера", callback_data="master_delete_action")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
         ])
         
         await callback.message.edit_text(text, reply_markup=keyboard)
 
 
-@router.callback_query(lambda c: c.data == "master_edit_name")
+@router.callback_query(lambda c: c.data == "master_edit_name_action")
 async def master_edit_name_start(callback: CallbackQuery, state: FSMContext):
     """Изменение имени мастера"""
     await callback.answer()
     
     if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
         return
     
     await callback.message.edit_text(
@@ -873,6 +896,16 @@ async def master_edit_name_process(message: types.Message, state: FSMContext):
     new_name = message.text.strip()
     data = await state.get_data()
     master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await message.answer(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        await state.clear()
+        return
     
     async with db.get_session() as session:
         repo = MasterRepository(session)
@@ -899,8 +932,8 @@ async def master_edit_name_process(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-@router.callback_query(lambda c: c.data == "master_edit_status")
-async def master_edit_status(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data == "master_edit_status_action")
+async def master_edit_status_action(callback: CallbackQuery, state: FSMContext):
     """Изменение статуса мастера"""
     await callback.answer()
     
@@ -909,6 +942,15 @@ async def master_edit_status(callback: CallbackQuery, state: FSMContext):
     
     data = await state.get_data()
     master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
     
     async with db.get_session() as session:
         repo = MasterRepository(session)
@@ -934,7 +976,7 @@ async def master_edit_status(callback: CallbackQuery, state: FSMContext):
             )
 
 
-@router.callback_query(lambda c: c.data == "master_delete")
+@router.callback_query(lambda c: c.data == "master_delete_action")
 async def master_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Подтверждение удаления мастера"""
     await callback.answer()
@@ -944,6 +986,15 @@ async def master_delete_confirm(callback: CallbackQuery, state: FSMContext):
     
     data = await state.get_data()
     master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"master_delete_confirm_{master_id}")],
@@ -965,7 +1016,16 @@ async def master_delete_process(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
     
-    master_id = int(callback.data.split("_")[3])
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
+    
+    try:
+        master_id = int(parts[3])
+    except ValueError:
+        await callback.answer("⏳ Пожалуйста, подождите...")
+        return
     
     async with db.get_session() as session:
         repo = MasterRepository(session)
@@ -988,6 +1048,437 @@ async def master_delete_process(callback: CallbackQuery):
                     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
                 ])
             )
+
+
+# ========== УПРАВЛЕНИЕ РАБОЧИМ ВРЕМЕНЕМ МАСТЕРА ==========
+
+@router.callback_query(lambda c: c.data == "master_edit_time")
+async def master_edit_time_start(callback: CallbackQuery, state: FSMContext):
+    """Изменение рабочего времени мастера"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер для редактирования.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    async with db.get_session() as session:
+        repo = MasterRepository(session)
+        master = await repo.get_by_id(master_id)
+        
+        if not master:
+            await callback.message.edit_text(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+            return
+        
+        text = (
+            f"🕐 <b>Рабочее время мастера {master.name}</b>\n\n"
+            f"⏰ Начало работы: <b>{master.work_start.strftime('%H:%M')}</b>\n"
+            f"⏰ Конец работы: <b>{master.work_end.strftime('%H:%M')}</b>\n"
+            f"📏 Шаг записи: <b>{master.slot_duration} мин</b>\n\n"
+            f"Что хотите изменить?"
+        )
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏰ Начало работы", callback_data="master_edit_start_time")],
+            [InlineKeyboardButton(text="⏰ Конец работы", callback_data="master_edit_end_time")],
+            [InlineKeyboardButton(text="📏 Шаг записи", callback_data="master_edit_slot")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+        ])
+        
+        await callback.message.edit_text(text, reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data == "master_edit_start_time")
+async def master_edit_start_time(callback: CallbackQuery, state: FSMContext):
+    """Изменение времени начала работы"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    await state.update_data(editing_time_type="start")
+    
+    await callback.message.edit_text(
+        "⏰ <b>Изменить время начала работы</b>\n\n"
+        "Введите время в формате <code>ЧЧ:ММ</code>\n"
+        "Примеры: <code>09:00</code>, <code>10:30</code>\n\n"
+        "Или выберите из предложенных:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="08:00", callback_data="time_preset_start_08:00"),
+             InlineKeyboardButton(text="09:00", callback_data="time_preset_start_09:00"),
+             InlineKeyboardButton(text="10:00", callback_data="time_preset_start_10:00")],
+            [InlineKeyboardButton(text="11:00", callback_data="time_preset_start_11:00"),
+             InlineKeyboardButton(text="12:00", callback_data="time_preset_start_12:00"),
+             InlineKeyboardButton(text="13:00", callback_data="time_preset_start_13:00")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="master_edit_time")]
+        ])
+    )
+    await state.set_state(AdminStates.editing_master_time)
+
+
+@router.callback_query(lambda c: c.data.startswith("time_preset_start_"))
+async def time_preset_start(callback: CallbackQuery, state: FSMContext):
+    """Выбор предустановленного времени начала"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    time_str = callback.data.split("_")[3]
+    await state.update_data(new_time=time_str)
+    
+    await save_master_time(callback, state)
+
+
+@router.callback_query(lambda c: c.data == "master_edit_end_time")
+async def master_edit_end_time(callback: CallbackQuery, state: FSMContext):
+    """Изменение времени конца работы"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    await state.update_data(editing_time_type="end")
+    
+    await callback.message.edit_text(
+        "⏰ <b>Изменить время окончания работы</b>\n\n"
+        "Введите время в формате <code>ЧЧ:ММ</code>\n"
+        "Примеры: <code>18:00</code>, <code>20:30</code>\n\n"
+        "Или выберите из предложенных:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="18:00", callback_data="time_preset_end_18:00"),
+             InlineKeyboardButton(text="19:00", callback_data="time_preset_end_19:00"),
+             InlineKeyboardButton(text="20:00", callback_data="time_preset_end_20:00")],
+            [InlineKeyboardButton(text="21:00", callback_data="time_preset_end_21:00"),
+             InlineKeyboardButton(text="22:00", callback_data="time_preset_end_22:00"),
+             InlineKeyboardButton(text="23:00", callback_data="time_preset_end_23:00")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="master_edit_time")]
+        ])
+    )
+    await state.set_state(AdminStates.editing_master_time)
+
+
+@router.callback_query(lambda c: c.data.startswith("time_preset_end_"))
+async def time_preset_end(callback: CallbackQuery, state: FSMContext):
+    """Выбор предустановленного времени окончания"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    time_str = callback.data.split("_")[3]
+    await state.update_data(new_time=time_str)
+    
+    await save_master_time(callback, state)
+
+
+@router.callback_query(lambda c: c.data == "master_edit_slot")
+async def master_edit_slot(callback: CallbackQuery, state: FSMContext):
+    """Изменение шага записи"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    await state.update_data(editing_time_type="slot")
+    
+    await callback.message.edit_text(
+        "📏 <b>Изменить шаг записи</b>\n\n"
+        "Введите шаг записи в минутах:\n"
+        "Примеры: <code>15</code>, <code>30</code>, <code>60</code>\n\n"
+        "Или выберите из предложенных:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="15 мин", callback_data="slot_preset_15"),
+             InlineKeyboardButton(text="30 мин", callback_data="slot_preset_30")],
+            [InlineKeyboardButton(text="45 мин", callback_data="slot_preset_45"),
+             InlineKeyboardButton(text="60 мин", callback_data="slot_preset_60")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="master_edit_time")]
+        ])
+    )
+    await state.set_state(AdminStates.editing_master_slot)
+
+
+@router.callback_query(lambda c: c.data.startswith("slot_preset_"))
+async def slot_preset(callback: CallbackQuery, state: FSMContext):
+    """Выбор предустановленного шага записи"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    slot_minutes = int(callback.data.split("_")[2])
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    async with db.get_session() as session:
+        repo = MasterRepository(session)
+        master = await repo.get_by_id(master_id)
+        
+        if master:
+            master.slot_duration = slot_minutes
+            await session.commit()
+            
+            await callback.message.edit_text(
+                f"✅ Шаг записи изменён на <b>{slot_minutes} минут</b>!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастеру", callback_data="master_edit_time")]
+                ])
+            )
+        else:
+            await callback.message.edit_text(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+
+
+@router.message(AdminStates.editing_master_time)
+async def master_time_process(message: types.Message, state: FSMContext):
+    """Сохранение времени (ручной ввод)"""
+    time_str = message.text.strip()
+    
+    try:
+        datetime.strptime(time_str, "%H:%M")
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат. Введите время в формате <code>ЧЧ:ММ</code>\n"
+            "Пример: <code>10:00</code>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="master_edit_time")]
+            ])
+        )
+        return
+    
+    await state.update_data(new_time=time_str)
+    await save_master_time_from_message(message, state)
+
+
+@router.message(AdminStates.editing_master_slot)
+async def master_slot_process(message: types.Message, state: FSMContext):
+    """Сохранение шага записи (ручной ввод)"""
+    try:
+        slot_minutes = int(message.text.strip())
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат. Введите число (минуты).",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="master_edit_time")]
+            ])
+        )
+        return
+    
+    if slot_minutes < 5 or slot_minutes > 120:
+        await message.answer(
+            "❌ Шаг записи должен быть от 5 до 120 минут.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="master_edit_time")]
+            ])
+        )
+        return
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await message.answer(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    async with db.get_session() as session:
+        repo = MasterRepository(session)
+        master = await repo.get_by_id(master_id)
+        
+        if master:
+            master.slot_duration = slot_minutes
+            await session.commit()
+            
+            await message.answer(
+                f"✅ Шаг записи изменён на <b>{slot_minutes} минут</b>!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастеру", callback_data="master_edit_time")]
+                ])
+            )
+        else:
+            await message.answer(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+    
+    await state.clear()
+
+
+async def save_master_time(callback: CallbackQuery, state: FSMContext):
+    """Сохранить время работы мастера"""
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    time_type = data.get('editing_time_type')
+    time_str = data.get('new_time')
+    
+    if not master_id or not time_type or not time_str:
+        await callback.message.edit_text(
+            "❌ Ошибка: не хватает данных.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    time_obj = datetime.strptime(time_str, "%H:%M").time()
+    
+    async with db.get_session() as session:
+        repo = MasterRepository(session)
+        master = await repo.get_by_id(master_id)
+        
+        if not master:
+            await callback.message.edit_text(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+            return
+        
+        if time_type == "start":
+            master.work_start = time_obj
+            await session.commit()
+            await callback.message.edit_text(
+                f"✅ Время начала работы изменено на <b>{time_str}</b>!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастеру", callback_data="master_edit_time")]
+                ])
+            )
+        elif time_type == "end":
+            master.work_end = time_obj
+            await session.commit()
+            await callback.message.edit_text(
+                f"✅ Время окончания работы изменено на <b>{time_str}</b>!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастеру", callback_data="master_edit_time")]
+                ])
+            )
+    
+    await state.clear()
+
+
+async def save_master_time_from_message(message: types.Message, state: FSMContext):
+    """Сохранить время работы мастера (из сообщения)"""
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    time_type = data.get('editing_time_type')
+    time_str = data.get('new_time')
+    
+    if not master_id or not time_type or not time_str:
+        await message.answer(
+            "❌ Ошибка: не хватает данных.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    time_obj = datetime.strptime(time_str, "%H:%M").time()
+    
+    async with db.get_session() as session:
+        repo = MasterRepository(session)
+        master = await repo.get_by_id(master_id)
+        
+        if not master:
+            await message.answer(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+            return
+        
+        if time_type == "start":
+            master.work_start = time_obj
+            await session.commit()
+            await message.answer(
+                f"✅ Время начала работы изменено на <b>{time_str}</b>!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастеру", callback_data="master_edit_time")]
+                ])
+            )
+        elif time_type == "end":
+            master.work_end = time_obj
+            await session.commit()
+            await message.answer(
+                f"✅ Время окончания работы изменено на <b>{time_str}</b>!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастеру", callback_data="master_edit_time")]
+                ])
+            )
+    
+    await state.clear()
 
 
 # ========== УПРАВЛЕНИЕ УСЛУГАМИ МАСТЕРА ==========
@@ -1014,7 +1505,6 @@ async def master_manage_services(callback: CallbackQuery, state: FSMContext):
     await state.update_data(managing_master_id=master_id)
     
     async with db.get_session() as session:
-        # Получаем мастера
         master_repo = MasterRepository(session)
         master = await master_repo.get_by_id(master_id)
         
@@ -1027,11 +1517,9 @@ async def master_manage_services(callback: CallbackQuery, state: FSMContext):
             )
             return
         
-        # Получаем все услуги
         service_repo = ServiceRepository(session)
         all_services = await service_repo.get_all()
         
-        # Получаем ID услуг, привязанных к мастеру
         master_service_repo = MasterServiceRepository(session)
         bound_service_ids = await master_service_repo.get_service_ids_by_master(master_id)
         
@@ -1048,10 +1536,8 @@ async def master_manage_services(callback: CallbackQuery, state: FSMContext):
         
         text += "Нажмите ➕ чтобы добавить услугу, ➖ чтобы убрать:"
         
-        # Создаём клавиатуру
         builder = InlineKeyboardBuilder()
         
-        # Кнопки для добавления услуг
         for service in all_services:
             if service.id not in bound_service_ids:
                 builder.button(
@@ -1059,7 +1545,6 @@ async def master_manage_services(callback: CallbackQuery, state: FSMContext):
                     callback_data=f"master_add_service_{master_id}_{service.id}"
                 )
         
-        # Кнопки для удаления услуг
         for service in all_services:
             if service.id in bound_service_ids:
                 builder.button(
@@ -1071,7 +1556,6 @@ async def master_manage_services(callback: CallbackQuery, state: FSMContext):
         builder.adjust(1)
         
         if not any(service.id not in bound_service_ids for service in all_services) and not bound_service_ids:
-            # Если нет ни доступных, ни привязанных услуг
             await callback.message.edit_text(
                 text + "\n\n⚠️ Услуг пока нет. Сначала добавьте услуги через 'Управление услугами'.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1112,7 +1596,6 @@ async def master_add_service(callback: CallbackQuery, state: FSMContext):
         else:
             await callback.answer("⚠️ Услуга уже привязана!", show_alert=True)
         
-        # Возвращаемся к управлению услугами мастера
         await master_manage_services(callback, state)
 
 
@@ -1145,8 +1628,9 @@ async def master_remove_service(callback: CallbackQuery, state: FSMContext):
         else:
             await callback.answer("⚠️ Услуга уже отвязана!", show_alert=True)
         
-        # Возвращаемся к управлению услугами мастера
         await master_manage_services(callback, state)
+
+
 # ========== УПРАВЛЕНИЕ УСЛУГАМИ ==========
 
 @router.callback_query(lambda c: c.data == "admin_services")

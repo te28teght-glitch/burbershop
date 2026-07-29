@@ -1,4 +1,5 @@
 import asyncio
+from datetime import time
 from database.db import db
 from database.models import Master, Service, MasterService, Admin
 
@@ -8,21 +9,36 @@ async def seed():
     async with db.get_session() as session:
         from sqlalchemy import select
         
-        # Проверяем мастеров
         result = await session.execute(select(Master))
         existing_masters = result.scalars().first()
         
         if not existing_masters:
-            # Добавляем мастеров
             masters = [
-                Master(name="Алексей", is_active=True),
-                Master(name="Дмитрий", is_active=True),
-                Master(name="Сергей", is_active=True),
+                Master(
+                    name="Алексей", 
+                    is_active=True,
+                    work_start=time(10, 0),
+                    work_end=time(21, 0),
+                    slot_duration=30
+                ),
+                Master(
+                    name="Дмитрий", 
+                    is_active=True,
+                    work_start=time(9, 0),
+                    work_end=time(20, 0),
+                    slot_duration=30
+                ),
+                Master(
+                    name="Сергей", 
+                    is_active=True,
+                    work_start=time(11, 0),
+                    work_end=time(22, 0),
+                    slot_duration=30
+                ),
             ]
             session.add_all(masters)
             await session.flush()
             
-            # Добавляем услуги
             services = [
                 Service(name="Мужская стрижка", description="Классическая стрижка", price=1500, duration_minutes=40),
                 Service(name="Стрижка бороды", description="Моделирование бороды", price=800, duration_minutes=30),
@@ -32,7 +48,6 @@ async def seed():
             session.add_all(services)
             await session.flush()
             
-            # Привязываем услуги к мастерам
             master_services = [
                 MasterService(master_id=1, service_id=1),
                 MasterService(master_id=1, service_id=2),
@@ -47,14 +62,12 @@ async def seed():
             
             print("✅ Мастера и услуги добавлены!")
         
-        # Проверяем админов
         result = await session.execute(select(Admin))
         existing_admin = result.scalars().first()
         
         if not existing_admin:
-            # Добавляем первого админа (ЗАМЕНИ НА СВОЙ TELEGRAM ID)
             admin = Admin(
-                telegram_id=1178663467,  # ← ЗАМЕНИ НА СВОЙ ID
+                telegram_id=1178663467,
                 username="admin",
                 full_name="Главный администратор",
                 is_active=True
