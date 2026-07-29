@@ -76,6 +76,26 @@ class BookingRepository(BaseRepository[Booking]):
             return True
         return False
     
+    async def get_unconfirmed_bookings(self) -> List[Booking]:
+        """Получить все неподтверждённые записи"""
+        query = (
+            select(Booking)
+            .where(
+                and_(
+                    Booking.is_confirmed == False,
+                    Booking.is_canceled == False,
+                    Booking.start_time >= datetime.now()
+                )
+            )
+            .options(
+                selectinload(Booking.master),
+                selectinload(Booking.service)
+            )
+            .order_by(Booking.start_time)
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+    
     async def get_booked_slots(
         self, 
         master_id: int, 
@@ -145,12 +165,17 @@ class BookingRepository(BaseRepository[Booking]):
         date: datetime,
         duration_minutes: int
     ) -> List[datetime]:
-        """Получить все свободные слоты на дату с учётом рабочего времени мастера"""
+        """Получить все свободные слоты на дату с учётом рабочего времени и дней работы мастера"""
         from database.repositories.master_repo import MasterRepository
         master_repo = MasterRepository(self.session)
         master = await master_repo.get_by_id(master_id)
         
         if not master:
+            return []
+        
+        # Проверяем, работает ли мастер в этот день
+        day_of_week = date.weekday()
+        if master.work_days is None or day_of_week not in master.work_days:
             return []
         
         day_start = datetime.combine(date.date(), master.work_start)

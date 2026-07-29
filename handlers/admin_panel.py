@@ -29,6 +29,7 @@ class AdminStates(StatesGroup):
     editing_master_status = State()
     editing_master_time = State()
     editing_master_slot = State()
+    editing_master_days = State()
     
     # Управление услугами
     adding_service = State()
@@ -267,6 +268,7 @@ async def admin_bookings(callback: CallbackQuery):
         [InlineKeyboardButton(text="📋 Записи на сегодня", callback_data="admin_today")],
         [InlineKeyboardButton(text="📅 Записи на завтра", callback_data="admin_tomorrow")],
         [InlineKeyboardButton(text="📊 Все записи", callback_data="admin_all")],
+        [InlineKeyboardButton(text="⏳ Неподтверждённые", callback_data="admin_unconfirmed")],
         [InlineKeyboardButton(text="✅ Подтвердить запись", callback_data="admin_confirm_booking_start")],
         [InlineKeyboardButton(text="❌ Отменить запись", callback_data="admin_cancel_booking_start")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_main")]
@@ -418,6 +420,106 @@ async def admin_all(callback: CallbackQuery):
         ])
         
         await callback.message.edit_text(text, reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data == "admin_unconfirmed")
+async def admin_unconfirmed(callback: CallbackQuery):
+    """Неподтверждённые записи"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    async with db.get_session() as session:
+        repo = BookingRepository(session)
+        bookings = await repo.get_unconfirmed_bookings()
+        
+        if not bookings:
+            await callback.message.edit_text(
+                "✅ <b>Неподтверждённых записей нет!</b>\n\n"
+                "Все записи подтверждены.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_bookings")]
+                ])
+            )
+            return
+        
+        text = "⏳ <b>Неподтверждённые записи:</b>\n\n"
+        for i, booking in enumerate(bookings, 1):
+            text += (
+                f"{i}. {booking.client_name} — {booking.service.name}\n"
+                f"   📅 {booking.start_time.strftime('%d.%m.%Y %H:%M')}\n"
+                f"   👤 Мастер: {booking.master.name}\n"
+                f"   📱 {booking.client_phone}\n"
+                f"   ID: #{booking.id}\n\n"
+            )
+        
+        builder = InlineKeyboardBuilder()
+        for booking in bookings[:10]:
+            builder.button(
+                text=f"✅ Подтвердить #{booking.id}",
+                callback_data=f"admin_quick_confirm_{booking.id}"
+            )
+            builder.button(
+                text=f"❌ Отменить #{booking.id}",
+                callback_data=f"admin_quick_cancel_{booking.id}"
+            )
+        builder.button(text="⬅️ Назад", callback_data="admin_bookings")
+        builder.adjust(2)
+        
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(lambda c: c.data.startswith("admin_quick_confirm_"))
+async def admin_quick_confirm(callback: CallbackQuery):
+    """Быстрое подтверждение записи"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    booking_id = int(callback.data.split("_")[3])
+    
+    async with db.get_session() as session:
+        repo = BookingRepository(session)
+        booking = await repo.get_by_id(booking_id)
+        
+        if not booking:
+            await callback.message.edit_text("❌ Запись не найдена.")
+            return
+        
+        booking.is_confirmed = True
+        booking.confirmed_at = datetime.now()
+        await session.commit()
+        
+        await callback.answer(f"✅ Запись #{booking_id} подтверждена!", show_alert=True)
+        await admin_unconfirmed(callback)
+
+
+@router.callback_query(lambda c: c.data.startswith("admin_quick_cancel_"))
+async def admin_quick_cancel(callback: CallbackQuery):
+    """Быстрая отмена записи"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    booking_id = int(callback.data.split("_")[3])
+    
+    async with db.get_session() as session:
+        repo = BookingRepository(session)
+        booking = await repo.get_by_id(booking_id)
+        
+        if not booking:
+            await callback.message.edit_text("❌ Запись не найдена.")
+            return
+        
+        booking.is_canceled = True
+        booking.canceled_at = datetime.now()
+        await session.commit()
+        
+        await callback.answer(f"❌ Запись #{booking_id} отменена!", show_alert=True)
+        await admin_unconfirmed(callback)
 
 
 @router.callback_query(lambda c: c.data.startswith("admin_booking_detail_"))
@@ -1085,11 +1187,15 @@ async def master_edit_time_start(callback: CallbackQuery, state: FSMContext):
             )
             return
         
+        days_names = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
+        work_days_str = ", ".join([days_names[d] for d in master.work_days]) if master.work_days else "Не указано"
+        
         text = (
             f"🕐 <b>Рабочее время мастера {master.name}</b>\n\n"
             f"⏰ Начало работы: <b>{master.work_start.strftime('%H:%M')}</b>\n"
             f"⏰ Конец работы: <b>{master.work_end.strftime('%H:%M')}</b>\n"
-            f"📏 Шаг записи: <b>{master.slot_duration} мин</b>\n\n"
+            f"📏 Шаг записи: <b>{master.slot_duration} мин</b>\n"
+            f"📅 Дни работы: <b>{work_days_str}</b>\n\n"
             f"Что хотите изменить?"
         )
         
@@ -1097,6 +1203,7 @@ async def master_edit_time_start(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="⏰ Начало работы", callback_data="master_edit_start_time")],
             [InlineKeyboardButton(text="⏰ Конец работы", callback_data="master_edit_end_time")],
             [InlineKeyboardButton(text="📏 Шаг записи", callback_data="master_edit_slot")],
+            [InlineKeyboardButton(text="📅 Дни работы", callback_data="master_edit_days")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
         ])
         
@@ -1292,6 +1399,170 @@ async def slot_preset(callback: CallbackQuery, state: FSMContext):
                     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
                 ])
             )
+
+
+@router.callback_query(lambda c: c.data == "master_edit_days")
+async def master_edit_days_start(callback: CallbackQuery, state: FSMContext):
+    """Изменение дней работы мастера"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    data = await state.get_data()
+    master_id = data.get('editing_master_id')
+    
+    if not master_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: не найден мастер.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    async with db.get_session() as session:
+        repo = MasterRepository(session)
+        master = await repo.get_by_id(master_id)
+        
+        if not master:
+            await callback.message.edit_text(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+            return
+        
+        days_names = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
+        work_days = master.work_days or []
+        
+        text = f"📅 <b>Дни работы мастера {master.name}</b>\n\n"
+        text += "Выберите дни, в которые работает мастер:\n\n"
+        
+        builder = InlineKeyboardBuilder()
+        
+        for i, day in enumerate(days_names):
+            is_selected = i in work_days
+            status = "✅" if is_selected else "⬜"
+            builder.button(
+                text=f"{status} {day}",
+                callback_data=f"master_day_toggle_{master_id}_{i}"
+            )
+        
+        builder.button(text="💾 Сохранить", callback_data=f"master_days_save_{master_id}")
+        builder.button(text="⬅️ Отмена", callback_data="master_edit_time")
+        builder.adjust(3)
+        
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+        await state.set_state(AdminStates.editing_master_days)
+
+
+@router.callback_query(lambda c: c.data.startswith("master_day_toggle_"))
+async def master_day_toggle(callback: CallbackQuery, state: FSMContext):
+    """Переключить день работы"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    parts = callback.data.split("_")
+    master_id = int(parts[3])
+    day_index = int(parts[4])
+    
+    data = await state.get_data()
+    work_days = data.get('temp_work_days')
+    
+    if work_days is None:
+        async with db.get_session() as session:
+            repo = MasterRepository(session)
+            master = await repo.get_by_id(master_id)
+            work_days = master.work_days or []
+    
+    if day_index in work_days:
+        work_days.remove(day_index)
+    else:
+        work_days.append(day_index)
+        work_days.sort()
+    
+    await state.update_data(temp_work_days=work_days)
+    
+    days_names = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
+    
+    text = f"📅 <b>Дни работы мастера</b>\n\n"
+    text += "Выберите дни, в которые работает мастер:\n\n"
+    
+    builder = InlineKeyboardBuilder()
+    
+    for i, day in enumerate(days_names):
+        is_selected = i in work_days
+        status = "✅" if is_selected else "⬜"
+        builder.button(
+            text=f"{status} {day}",
+            callback_data=f"master_day_toggle_{master_id}_{i}"
+        )
+    
+    builder.button(text="💾 Сохранить", callback_data=f"master_days_save_{master_id}")
+    builder.button(text="⬅️ Отмена", callback_data="master_edit_time")
+    builder.adjust(3)
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await state.set_state(AdminStates.editing_master_days)
+
+
+@router.callback_query(lambda c: c.data.startswith("master_days_save_"))
+async def master_days_save(callback: CallbackQuery, state: FSMContext):
+    """Сохранить дни работы мастера"""
+    await callback.answer()
+    
+    if not await is_admin(callback.from_user.id):
+        return
+    
+    master_id = int(callback.data.split("_")[3])
+    
+    data = await state.get_data()
+    work_days = data.get('temp_work_days')
+    
+    if work_days is None:
+        await callback.message.edit_text(
+            "❌ Ошибка: не выбраны дни работы.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+            ])
+        )
+        return
+    
+    if not work_days:
+        await callback.answer("⚠️ Выберите хотя бы один день!", show_alert=True)
+        return
+    
+    async with db.get_session() as session:
+        repo = MasterRepository(session)
+        master = await repo.get_by_id(master_id)
+        
+        if master:
+            master.work_days = work_days
+            await session.commit()
+            
+            days_names = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
+            work_days_str = ", ".join([days_names[d] for d in work_days])
+            
+            await callback.message.edit_text(
+                f"✅ Дни работы изменены!\n\n"
+                f"📅 <b>{work_days_str}</b>",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад к мастеру", callback_data="master_edit_time")]
+                ])
+            )
+        else:
+            await callback.message.edit_text(
+                "❌ Мастер не найден.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_masters")]
+                ])
+            )
+    
+    await state.clear()
 
 
 @router.message(AdminStates.editing_master_time)

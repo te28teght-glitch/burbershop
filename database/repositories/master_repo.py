@@ -23,3 +23,10 @@ class MasterRepository(BaseRepository[Master]):
         query = select(Master).where(Master.is_active == True)
         result = await self.session.execute(query)
         return result.scalars().all()
+    
+    async def get_work_days(self, master_id: int) -> list[int]:
+        """Получить дни работы мастера"""
+        master = await self.get_by_id(master_id)
+        if master:
+            return master.work_days or []
+        return []

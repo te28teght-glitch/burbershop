@@ -19,21 +19,24 @@ async def seed():
                     is_active=True,
                     work_start=time(10, 0),
                     work_end=time(21, 0),
-                    slot_duration=30
+                    slot_duration=30,
+                    work_days=[0, 1, 2, 3, 4, 5]  # ПН-СБ
                 ),
                 Master(
                     name="Дмитрий", 
                     is_active=True,
                     work_start=time(9, 0),
                     work_end=time(20, 0),
-                    slot_duration=30
+                    slot_duration=30,
+                    work_days=[0, 1, 2, 3, 4]  # ПН-ПТ
                 ),
                 Master(
                     name="Сергей", 
                     is_active=True,
                     work_start=time(11, 0),
                     work_end=time(22, 0),
-                    slot_duration=30
+                    slot_duration=30,
+                    work_days=[1, 2, 3, 4, 5, 6]  # ВТ-ВС
                 ),
             ]
             session.add_all(masters)
@@ -67,7 +70,7 @@ async def seed():
         
         if not existing_admin:
             admin = Admin(
-                telegram_id=1178663467,
+                telegram_id=1178663467,  # ← ЗАМЕНИ НА СВОЙ ID
                 username="admin",
                 full_name="Главный администратор",
                 is_active=True

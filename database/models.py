@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Float, BigInteger, Time
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Float, BigInteger, Time, JSON
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, time
 
@@ -27,6 +27,9 @@ class Master(Base):
     work_start = Column(Time, default=time(10, 0))
     work_end = Column(Time, default=time(20, 0))
     slot_duration = Column(Integer, default=30)
+    
+    # Дни работы (0 - понедельник, 6 - воскресенье)
+    work_days = Column(JSON, default=[0, 1, 2, 3, 4])  # По умолчанию ПН-ПТ
     
     services = relationship("Service", secondary="master_services", back_populates="masters")
 

@@ -109,10 +109,13 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
     
     await state.update_data(service_id=service_id, master_id=master_id)
     
+    # Получаем клавиатуру с рабочими днями мастера
+    keyboard = await get_date_keyboard(master_id)
+    
     await callback.message.edit_text(
         "📅 <b>Выберите дату:</b>\n\n"
         "Выберите день для записи:",
-        reply_markup=get_date_keyboard()
+        reply_markup=keyboard
     )
     
     await state.set_state(BookingStates.waiting_for_datetime)
@@ -172,10 +175,15 @@ async def back_to_services(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data == "back_to_date")
 async def back_to_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    data = await state.get_data()
+    master_id = data.get('master_id')
+    
+    keyboard = await get_date_keyboard(master_id)
+    
     await callback.message.edit_text(
         "📅 <b>Выберите дату:</b>\n\n"
         "Выберите день для записи:",
-        reply_markup=get_date_keyboard()
+        reply_markup=keyboard
     )
     await state.set_state(BookingStates.waiting_for_datetime)
 
@@ -227,23 +235,48 @@ async def process_contacts(callback: CallbackQuery):
     )
 
 
-def get_date_keyboard():
-    """Клавиатура для выбора даты"""
+async def get_date_keyboard(master_id: int = None):
+    """Клавиатура для выбора даты (только рабочие дни мастера)"""
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     
     builder = InlineKeyboardBuilder()
     today = datetime.now()
     
-    for i in range(7):
+    # Если есть master_id, получаем дни работы
+    work_days = None
+    if master_id:
+        async with db.get_session() as session:
+            repo = MasterRepository(session)
+            master = await repo.get_by_id(master_id)
+            if master:
+                work_days = master.work_days
+    
+    days_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    buttons_added = 0
+    
+    # Показываем следующие 14 дней
+    for i in range(14):
         date = today + timedelta(days=i)
-        day_name = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][date.weekday()]
+        day_of_week = date.weekday()
+        day_name = days_names[day_of_week]
+        
+        # Если мастер не выбран или день рабочий - показываем
+        if work_days is None or day_of_week in work_days:
+            builder.button(
+                text=f"📅 {day_name} {date.strftime('%d.%m')}",
+                callback_data=f"date_{date.strftime('%Y-%m-%d')}"
+            )
+            buttons_added += 1
+    
+    # Если нет доступных дней, показываем сообщение
+    if buttons_added == 0:
         builder.button(
-            text=f"📅 {day_name} {date.strftime('%d.%m')}",
-            callback_data=f"date_{date.strftime('%Y-%m-%d')}"
+            text="😔 Нет доступных дней",
+            callback_data="no_days"
         )
     
     builder.button(text="⬅️ Назад к услугам", callback_data="back_to_services")
-    builder.adjust(1)
+    builder.adjust(2)
     return builder.as_markup()
 
 
@@ -266,6 +299,33 @@ async def process_date_selection(callback: CallbackQuery, state: FSMContext):
         return
     
     async with db.get_session() as session:
+        master_repo = MasterRepository(session)
+        master = await master_repo.get_by_id(master_id)
+        
+        if not master:
+            await callback.message.edit_text(
+                "⚠️ Мастер не найден.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
+        
+        # Проверяем, работает ли мастер в этот день
+        day_of_week = selected_date.weekday()
+        work_days = master.work_days or []
+        
+        if day_of_week not in work_days:
+            days_names = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
+            work_days_str = ", ".join([days_names[d] for d in work_days]) if work_days else "не работает"
+            
+            keyboard = await get_date_keyboard(master_id)
+            await callback.message.edit_text(
+                f"😔 Мастер <b>{master.name}</b> не работает в {days_names[day_of_week]}.\n\n"
+                f"📅 Дни работы: <b>{work_days_str}</b>\n\n"
+                "Пожалуйста, выберите другой день:",
+                reply_markup=keyboard
+            )
+            return
+        
         service_repo = ServiceRepository(session)
         service = await service_repo.get_by_id(service_id)
         
@@ -286,10 +346,11 @@ async def process_date_selection(callback: CallbackQuery, state: FSMContext):
         )
         
         if not available_slots:
+            keyboard = await get_date_keyboard(master_id)
             await callback.message.edit_text(
                 f"😔 На {selected_date.strftime('%d.%m.%Y')} нет свободных слотов.\n\n"
                 "Пожалуйста, выберите другую дату:",
-                reply_markup=get_date_keyboard()
+                reply_markup=keyboard
             )
             return
         
@@ -358,11 +419,12 @@ async def process_time_selection(callback: CallbackQuery, state: FSMContext):
             )
             
             if not available_slots:
+                keyboard = await get_date_keyboard(master_id)
                 await callback.message.edit_text(
                     "⏰ <b>Это время уже занято!</b>\n\n"
                     "Свободных слотов на эту дату больше нет.\n"
                     "Пожалуйста, выберите другую дату:",
-                    reply_markup=get_date_keyboard()
+                    reply_markup=keyboard
                 )
                 return
             
