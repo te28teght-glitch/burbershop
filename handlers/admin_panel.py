@@ -51,6 +51,10 @@ class AdminStates(StatesGroup):
 
 # Функция проверки админа
 async def is_admin(user_id: int) -> bool:
+    # Жёстко прописываем твой ID
+    if user_id == 1178663467:  # ← ТВОЙ TELEGRAM ID
+        return True
+    
     async with db.get_session() as session:
         repo = AdminRepository(session)
         return await repo.is_admin(user_id)
